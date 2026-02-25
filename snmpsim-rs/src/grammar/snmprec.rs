@@ -52,7 +52,11 @@ impl SnmprecGrammar {
                 continue;
             }
             match chars.next() {
-                None => return Err(SnmpsimError::Parse("Trailing backslash in escaped string".into())),
+                None => {
+                    return Err(SnmpsimError::Parse(
+                        "Trailing backslash in escaped string".into(),
+                    ))
+                }
                 Some('\\') => out.push(b'\\'),
                 Some('\'') => out.push(b'\''),
                 Some('"') => out.push(b'"'),
@@ -64,15 +68,22 @@ impl SnmprecGrammar {
                 Some('t') => out.push(0x09),
                 Some('v') => out.push(0x0B),
                 Some('x') => {
-                    let h1 = chars.next().ok_or_else(|| SnmpsimError::Parse("Truncated \\x escape".into()))?;
-                    let h2 = chars.next().ok_or_else(|| SnmpsimError::Parse("Truncated \\x escape".into()))?;
+                    let h1 = chars
+                        .next()
+                        .ok_or_else(|| SnmpsimError::Parse("Truncated \\x escape".into()))?;
+                    let h2 = chars
+                        .next()
+                        .ok_or_else(|| SnmpsimError::Parse("Truncated \\x escape".into()))?;
                     let hex = format!("{}{}", h1, h2);
                     let byte = u8::from_str_radix(&hex, 16)
                         .map_err(|e| SnmpsimError::Parse(format!("Invalid \\x escape: {}", e)))?;
                     out.push(byte);
                 }
                 Some(other) => {
-                    return Err(SnmpsimError::Parse(format!("Unknown escape character: {}", other)));
+                    return Err(SnmpsimError::Parse(format!(
+                        "Unknown escape character: {}",
+                        other
+                    )));
                 }
             }
         }
@@ -135,20 +146,27 @@ mod tests {
     #[test]
     fn test_parse_basic() {
         let g = SnmprecGrammar::new();
-        let (oid, tag, val) = g
-            .parse(b"1.3.6.1.2.1.1.1.0|4|Linux 4.15")
-            .unwrap();
+        let (oid, tag, val) = g.parse(b"1.3.6.1.2.1.1.1.0|4|Linux 4.15").unwrap();
         assert_eq!(oid, "1.3.6.1.2.1.1.1.0");
         assert_eq!(tag, "4");
         assert_eq!(val, "Linux 4.15");
     }
 
     #[test]
+    fn test_parse_timeticks() {
+        let g = SnmprecGrammar::new();
+        let (oid, tag, val) = g
+            .parse(b"1.3.6.1.2.1.1.3.0|67:numeric|rate=100,initial=123999999")
+            .unwrap();
+        assert_eq!(oid, "1.3.6.1.2.1.1.3.0");
+        assert_eq!(tag, "67:numeric");
+        assert_eq!(val, "rate=100,initial=123999999");
+    }
+
+    #[test]
     fn test_parse_hex_tag() {
         let g = SnmprecGrammar::new();
-        let (_, tag, _) = g
-            .parse(b"1.3.6.1.2.1.2.2.1.6.1|4x|001122334455")
-            .unwrap();
+        let (_, tag, _) = g.parse(b"1.3.6.1.2.1.2.2.1.6.1|4x|001122334455").unwrap();
         assert_eq!(tag, "4x");
     }
 
@@ -161,8 +179,14 @@ mod tests {
 
     #[test]
     fn test_split_module() {
-        assert_eq!(SnmprecGrammar::split_module("4:delay"), ("4", Some("delay")));
-        assert_eq!(SnmprecGrammar::split_module("4x:redis"), ("4x", Some("redis")));
+        assert_eq!(
+            SnmprecGrammar::split_module("4:delay"),
+            ("4", Some("delay"))
+        );
+        assert_eq!(
+            SnmprecGrammar::split_module("4x:redis"),
+            ("4x", Some("redis"))
+        );
         assert_eq!(SnmprecGrammar::split_module("66"), ("66", None));
     }
 

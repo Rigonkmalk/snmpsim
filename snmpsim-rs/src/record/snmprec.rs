@@ -1,9 +1,11 @@
 //! Record implementation for .snmprec format files.
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use crate::error::{Result, SnmpsimError};
 use crate::grammar::snmprec::SnmprecGrammar;
@@ -11,16 +13,19 @@ use crate::grammar::Grammar;
 use crate::oid::Oid;
 use crate::record::{EvalContext, Record};
 use crate::snmp_value::{tags, SnmpValue};
+use crate::variation::{VariationContext, VariationModuleRegistry};
 
 /// Record handler for .snmprec files.
 pub struct SnmprecRecord {
     grammar: SnmprecGrammar,
+    registry: Arc<VariationModuleRegistry>,
 }
 
 impl SnmprecRecord {
     pub fn new() -> Self {
         SnmprecRecord {
             grammar: SnmprecGrammar::new(),
+            registry: Arc::new(VariationModuleRegistry::with_builtins()),
         }
     }
 
@@ -172,16 +177,40 @@ impl Record for SnmprecRecord {
         Oid::from_str(oid_str)
     }
 
-    fn evaluate_value(&self, _oid: &Oid, tag: &str, value_str: &str, ctx: &EvalContext) -> Result<SnmpValue> {
-        // Split off module name (e.g. "4:delay" → tag="4", module="delay")
-        let (type_tag, _module_name) = SnmprecGrammar::split_module(tag);
+    fn evaluate_value(&self, oid: &Oid, tag: &str, value_str: &str, ctx: &EvalContext) -> Result<SnmpValue> {
+        // Subtree records have a leading ':' with no numeric type prefix
+        if tag.starts_with(':') {
+            return Ok(SnmpValue::Null);
+        }
+
+        // Split off module name (e.g. "4:delay" → type_tag="4", module="delay")
+        let (type_tag, module_name) = SnmprecGrammar::split_module(tag);
 
         // Split off encoding suffix (e.g. "4x" → base="4", enc=Some('x'))
         let (base_tag, encoding) = SnmprecGrammar::unpack_tag(type_tag);
 
-        // For subtree records (tag starts with ':'), return null placeholder
-        if base_tag.starts_with(':') {
-            return Ok(SnmpValue::Null);
+        // Route through variation module when one is specified
+        if let Some(name) = module_name {
+            if let Some(module) = self.registry.get(name) {
+                let mut vctx = VariationContext {
+                    oid: oid.clone(),
+                    tag: base_tag.to_string(),
+                    value: value_str.to_string(),
+                    next_flag: ctx.next_flag,
+                    set_flag: ctx.set_flag,
+                    exact_match: ctx.exact_match,
+                    data_file: ctx.data_file.clone(),
+                    options: String::new(),
+                    record_context: HashMap::new(),
+                    agent_context: HashMap::new(),
+                };
+                let result = module.variate(&mut vctx)?;
+                return Ok(result.value);
+            } else {
+                return Err(SnmpsimError::Config(format!(
+                    "Unknown variation module: {:?}", name
+                )));
+            }
         }
 
         let value = Self::parse_value(base_tag, encoding, value_str)?;

@@ -84,7 +84,10 @@ impl VariationModule for ErrorModule {
         let params = parse_kv(&ctx.value);
 
         // error status to embed in value
-        let error = params.get("error").map(|s| s.as_str()).unwrap_or("noSuchInstance");
+        let error = params
+            .get("error")
+            .map(|s| s.as_str())
+            .unwrap_or("noSuchInstance");
 
         let value = match error {
             "noSuchObject" => SnmpValue::NoSuchObject,
@@ -131,9 +134,14 @@ impl VariationModule for NumericModule {
         let params = parse_kv(&ctx.value);
 
         let min: i64 = params.get("min").and_then(|v| v.parse().ok()).unwrap_or(0);
-        let max: i64 = params.get("max").and_then(|v| v.parse().ok()).unwrap_or(100);
-        let start: i64 = params.get("start").and_then(|v| v.parse().ok()).unwrap_or(min);
-        let step: i64 = params.get("step").and_then(|v| v.parse().ok()).unwrap_or(1);
+        // Default max to i64::MAX so an unspecified max never causes wrapping
+        let max: i64 = params.get("max").and_then(|v| v.parse().ok()).unwrap_or(i64::MAX);
+        // `initial` is a Python-snmpsim alias for the starting value
+        let initial: i64 = params.get("initial").and_then(|v| v.parse().ok()).unwrap_or(min);
+        let start: i64 = params.get("start").and_then(|v| v.parse().ok()).unwrap_or(initial);
+        // `rate` is a Python-snmpsim alias for the per-poll step size
+        let rate: i64 = params.get("rate").and_then(|v| v.parse().ok()).unwrap_or(1);
+        let step: i64 = params.get("step").and_then(|v| v.parse().ok()).unwrap_or(rate);
         let function = params.get("function").map(|s| s.as_str()).unwrap_or("inc");
 
         // Get current value from record context
@@ -146,7 +154,11 @@ impl VariationModule for NumericModule {
         let next = match function {
             "inc" => {
                 let v = current + step;
-                if v > max { min } else { v }
+                if v > max {
+                    min
+                } else {
+                    v
+                }
             }
             "osc" => {
                 let direction: i64 = ctx
@@ -168,7 +180,8 @@ impl VariationModule for NumericModule {
             _ => current + step,
         };
 
-        ctx.record_context.insert("current".into(), next.to_string());
+        ctx.record_context
+            .insert("current".into(), next.to_string());
 
         // Determine value type from tag
         let value = match ctx.tag.as_str() {
@@ -260,14 +273,19 @@ impl VariationModule for WriteCacheModule {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Parse a `key=value&key2=value2` style options string.
+/// Parse a `key=value,key2=value2` style options string.
+/// Both `,` and `&` are accepted as pair separators.
 fn parse_kv(s: &str) -> HashMap<String, String> {
-    s.split('&')
+    s.split(|c| c == ',' || c == '&')
         .filter_map(|pair| {
             let mut parts = pair.splitn(2, '=');
             let key = parts.next()?.trim().to_string();
             let val = parts.next().unwrap_or("").trim().to_string();
-            if key.is_empty() { None } else { Some((key, val)) }
+            if key.is_empty() {
+                None
+            } else {
+                Some((key, val))
+            }
         })
         .collect()
 }
