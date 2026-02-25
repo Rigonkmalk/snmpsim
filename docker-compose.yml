@@ -1,0 +1,27 @@
+services:
+  snmpsimulator-rs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: snmpsimulator-rs:latest
+    container_name: snmpsimulator-rs
+
+    ports:
+      - "161:161/udp"
+
+    volumes:
+      - ./data:/data:ro
+
+    command:
+      - "--data-dir=/data"
+      - "--agent-udpv4-endpoint=0.0.0.0:161"
+      # - "--agent-udpv6-endpoint=:::161"       # IPv6 (optional)
+      # - "--v3-user=myuser"                    # SNMPv3 user (optional)
+
+    environment:
+      - RUST_LOG=info
+
+    restart: unless-stopped
+
+    cap_add:
+      - NET_BIND_SERVICE
